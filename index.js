@@ -1,5 +1,3 @@
-const fs = require("fs");
-const path = require("path");
 const express = require("express");
 const puppeteer = require("puppeteer");
 const Diff = require("diff");
@@ -11,7 +9,7 @@ const port = 3000;
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-async function fetchAndSaveHtmlContent(url, filePath) {
+async function fetchHtmlContent(url) {
 	const browser = await puppeteer.launch();
 	const page = await browser.newPage();
 	await page.goto(url, { waitUntil: "networkidle0" });
@@ -19,9 +17,6 @@ async function fetchAndSaveHtmlContent(url, filePath) {
 	// Получаем HTML-контент страницы
 	const htmlContent = await page.content();
 	await browser.close();
-
-	// Сохраняем HTML в файл
-	fs.writeFileSync(filePath, htmlContent, "utf-8");
 
 	return htmlContent;
 }
@@ -31,19 +26,9 @@ async function getHtmlContent(url) {
 		throw new Error("URL не может быть undefined или пустым.");
 	}
 
-	// Определяем имя файла для сохранения HTML на основе URL
-	const urlFileName = url.replace(/[^a-zA-Z0-9]/g, "_") + ".html";
-	const filePath = path.join(__dirname, "saved_html", urlFileName);
-
-	// Проверяем, существует ли файл с сохранённым HTML
-	if (fs.existsSync(filePath)) {
-		console.log(`Файл ${filePath} существует. Чтение из файла.`);
-		return fs.readFileSync(filePath, "utf-8");
-	}
-
-	// Если файл не найден, загружаем HTML с сайта и сохраняем его
-	console.log(`Файл ${filePath} не найден. Загрузка HTML.`);
-	return await fetchAndSaveHtmlContent(url, filePath);
+	// Загружаем HTML с сайта
+	console.log(`Загрузка HTML с ${url}.`);
+	return await fetchHtmlContent(url);
 }
 
 app.get("/", (req, res) => {
