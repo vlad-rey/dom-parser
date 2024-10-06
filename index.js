@@ -1,19 +1,169 @@
+const fs = require("fs");
+const path = require("path");
 const express = require("express");
-const { getDomTree } = require("./modules/scraper");
+const puppeteer = require("puppeteer");
+const Diff = require("diff");
 
 const app = express();
 const port = 3000;
 
-app.get("/", async (req, res) => {
+// Middleware для парсинга JSON и URL-кодированных данных
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+async function fetchAndSaveHtmlContent(url, filePath) {
+	const browser = await puppeteer.launch();
+	const page = await browser.newPage();
+	await page.goto(url, { waitUntil: "networkidle0" });
+
+	// Получаем HTML-контент страницы
+	const htmlContent = await page.content();
+	await browser.close();
+
+	// Сохраняем HTML в файл
+	fs.writeFileSync(filePath, htmlContent, "utf-8");
+
+	return htmlContent;
+}
+
+async function getHtmlContent(url) {
+	if (!url) {
+		throw new Error("URL не может быть undefined или пустым.");
+	}
+
+	// Определяем имя файла для сохранения HTML на основе URL
+	const urlFileName = url.replace(/[^a-zA-Z0-9]/g, "_") + ".html";
+	const filePath = path.join(__dirname, "saved_html", urlFileName);
+
+	// Проверяем, существует ли файл с сохранённым HTML
+	if (fs.existsSync(filePath)) {
+		console.log(`Файл ${filePath} существует. Чтение из файла.`);
+		return fs.readFileSync(filePath, "utf-8");
+	}
+
+	// Если файл не найден, загружаем HTML с сайта и сохраняем его
+	console.log(`Файл ${filePath} не найден. Загрузка HTML.`);
+	return await fetchAndSaveHtmlContent(url, filePath);
+}
+
+app.get("/", (req, res) => {
+	// Возвращаем HTML-форму для ввода URL-адресов
+	res.send(`
+    <html>
+    <head>
+      <title>Сравнение HTML-страниц</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+        }
+        input {
+          width: 50%;
+          display: block;
+          margin: 10px 0;
+        }
+        .result {
+          margin-top: 20px;
+        }
+      </style>
+    </head>
+    <body>
+      <h1>Сравнение HTML-страниц</h1>
+      <form id="urlForm">
+        <label for="prodUrl">Prod URL:</label>
+        <input type="text" id="prodUrl" name="prodUrl" required>
+        
+        <label for="devUrl">Dev URL:</label>
+        <input type="text" id="devUrl" name="devUrl" required>
+        
+        <button type="submit">Сравнить</button>
+      </form>
+      <div class="result" id="resultContainer"></div>
+
+      <script>
+        const form = document.getElementById('urlForm');
+        form.onsubmit = async (e) => {
+          e.preventDefault(); // Отключаем стандартное поведение формы
+
+          // Получаем значения инпутов
+          const prodUrl = document.getElementById('prodUrl').value;
+          const devUrl = document.getElementById('devUrl').value;
+
+          // Отправляем данные как JSON
+          const response = await fetch('/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json' // Указываем, что отправляем JSON
+            },
+            body: JSON.stringify({ prodUrl, devUrl }) // Отправляем данные как JSON
+          });
+
+          const resultHtml = await response.text();
+          document.getElementById('resultContainer').innerHTML = resultHtml;
+        };
+      </script>
+    </body>
+    </html>
+  `);
+});
+
+app.post("/", async (req, res) => {
+	const { prodUrl, devUrl } = req.body;
+
+	// Добавление отладочного вывода
+	console.log("Полученные данные:", req.body);
+
+	if (!prodUrl || !devUrl) {
+		return res.status(400).send("Оба URL должны быть указаны.");
+	}
+
 	try {
-		const url = req.query.url || "https://example.com"; // URL можно передавать через query params
-		const domTree = await getDomTree(url);
-		res.send(`<ul>${domTree}</ul>`);
+		const prodHtml = await getHtmlContent(prodUrl);
+		const devHtml = await getHtmlContent(devUrl);
+
+		const diff = Diff.diffChars(prodHtml, devHtml);
+
+		let addedCount = 0;
+		let removedCount = 0;
+		diff.forEach((part) => {
+			if (part.added) {
+				addedCount++;
+			} else if (part.removed) {
+				removedCount++;
+			}
+		});
+
+		// Создаём HTML-контент для вывода различий
+		let htmlOutput = `
+      <h2>Отчет</h2>
+      <pre>
+      {
+        "addedCount": ${addedCount},
+        "removedCount": ${removedCount}
+      }
+      </pre>
+      <h2>Различия</h2>
+      <pre>`;
+
+		diff.forEach((part) => {
+			// Добавляем цвет в зависимости от типа изменений
+			const color = part.added ? "#24b703" : part.removed ? "#fc8385" : "black";
+			htmlOutput += `<span style="color:${
+				color === "black" ? "black" : "white"
+			}; background: ${color === "black" ? "white" : color}; font-size: ${
+				color === "black" ? "14px" : "18px"
+			}">${part.value.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span>`;
+		});
+
+		htmlOutput += "</pre>";
+
+		// Отправляем результат обратно на ту же страницу
+		res.send(htmlOutput);
 	} catch (error) {
-		res.status(500).send("Error occurred while fetching DOM tree");
+		console.error(error);
+		res.status(500).send("Произошла ошибка при получении HTML-контента.");
 	}
 });
 
 app.listen(port, () => {
-	console.log(`Server is running on http://localhost:${port}`);
+	console.log(`Сервер запущен на http://localhost:${port}`);
 });
