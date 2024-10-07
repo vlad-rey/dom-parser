@@ -94,6 +94,7 @@ app.get("/", (req, res) => {
         }
         pre {
           white-space: pre-wrap;
+          word-break: break-all;
           color: #333;
         }
         .nav-button {
